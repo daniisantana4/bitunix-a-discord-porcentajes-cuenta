@@ -11,9 +11,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-WEBHOOK_URL   = os.getenv("DISCORD_WEBHOOK_URL", "")
-YOUTUBER_NAME = os.getenv("YOUTUBER_NAME", "BitunixBot")
-AVATAR_URL    = os.getenv("AVATAR_URL", "")
+WEBHOOK_URL    = os.getenv("DISCORD_WEBHOOK_URL", "")
+YOUTUBER_NAME  = os.getenv("YOUTUBER_NAME", "BitunixBot")
+AVATAR_URL     = os.getenv("AVATAR_URL", "")
+COPY_TRADE_URL = os.getenv("COPY_TRADE_URL", "")   # perfil de copy trading del youtuber
+REFERRAL_URL   = os.getenv("REFERRAL_URL", "")      # link de referido
 
 # Colores para embeds (decimal)
 COLOR_LONG_OPEN   = 0x00E676   # verde brillante
@@ -93,6 +95,7 @@ class DiscordSender:
 
         embed = {
             "title": f"{emoji} {label}  —  {pair_display}",
+            "description": _build_links(symbol),
             "color": color,
             "fields": [
                 {"name": "📊 Par",            "value": f"`{pair_display}`",        "inline": True},
@@ -134,6 +137,7 @@ class DiscordSender:
 
         embed = {
             "title": f"{emoji} CIERRE {direction}  —  {pair_display}",
+            "description": _build_links(symbol),
             "color": color,
             "fields": [
                 {"name": "📊 Par",            "value": f"`{pair_display}`",          "inline": True},
@@ -173,6 +177,7 @@ class DiscordSender:
 
         embed = {
             "title": f"📝 Orden {order_type} — {action} {direction}",
+            "description": _build_links(symbol),
             "color": COLOR_ORDER_NEW,
             "fields": [
                 {"name": "📊 Par",            "value": f"`{pair_display}`",  "inline": True},
@@ -213,6 +218,7 @@ class DiscordSender:
 
         embed = {
             "title": f"⚡ Orden Ejecutada — {action} {direction}",
+            "description": _build_links(symbol),
             "color": COLOR_LONG_OPEN if is_long else COLOR_SHORT_OPEN,
             "fields": [
                 {"name": "📊 Par",            "value": f"`{pair_display}`",  "inline": True},
@@ -237,6 +243,7 @@ class DiscordSender:
 
         embed = {
             "title": f"🚫 Orden Cancelada — {pair_display}",
+            "description": _build_links(symbol),
             "color": COLOR_ORDER_CANCEL,
             "fields": [
                 {"name": "📊 Par",       "value": f"`{pair_display}`", "inline": True},
@@ -259,6 +266,7 @@ class DiscordSender:
 
         embed = {
             "title": f"🔄 Posición Actualizada — {pair_display}",
+            "description": _build_links(symbol),
             "color": COLOR_INFO,
             "fields": [
                 {"name": f"{emoji} Dirección",  "value": f"`{direction}`",          "inline": True},
@@ -294,3 +302,23 @@ def _format_pair(symbol: str) -> str:
             base = s[: -len(quote)]
             return f"{base}/{quote}"
     return s
+
+
+def _build_links(symbol: str) -> str:
+    """Construye la línea de enlaces para el embed."""
+    symbol_clean = symbol.upper().replace("/", "")
+    links = []
+
+    # Link directo al par en Bitunix (futuros)
+    trade_url = f"https://www.bitunix.com/contract-trade/{symbol_clean}"
+    links.append(f"[📈 Operar {_format_pair(symbol)}]({trade_url})")
+
+    # Link al perfil de copy trading
+    if COPY_TRADE_URL:
+        links.append(f"[🔄 Copy Trading]({COPY_TRADE_URL})")
+
+    # Link de referido
+    if REFERRAL_URL:
+        links.append(f"[🎁 Registro]({REFERRAL_URL})")
+
+    return " • ".join(links)
