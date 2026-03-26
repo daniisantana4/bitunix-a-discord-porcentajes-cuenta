@@ -131,6 +131,21 @@ class BitunixREST:
             return raw.get("positionList", [])
         return raw
 
+    async def get_pending_tp_sl_orders(self, symbol: str = "") -> list:
+        """TP/SL pendientes para un símbolo."""
+        params = {"limit": "100"}
+        if symbol:
+            params["symbol"] = symbol
+        data = await self._request("GET",
+                                   "/api/v1/futures/tpsl/get_pending_orders",
+                                   params=params)
+        if not data or str(data.get("code")) != "0":
+            return []
+        raw = data.get("data", [])
+        if isinstance(raw, dict):
+            return raw.get("orderList", raw.get("list", []))
+        return raw if isinstance(raw, list) else []
+
     async def get_pending_orders(self, symbol: str = "") -> list:
         """Órdenes pendientes."""
         params = {"limit": "50"}
