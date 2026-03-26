@@ -1,6 +1,5 @@
 """
 Envía mensajes formateados (embeds) a Discord usando un Webhook.
-No necesita bot token ni discord.py — solo una URL de webhook.
 """
 
 import os
@@ -17,7 +16,6 @@ AVATAR_URL     = os.getenv("AVATAR_URL", "")
 COPY_TRADE_URL = os.getenv("COPY_TRADE_URL", "")
 REFERRAL_URL   = os.getenv("REFERRAL_URL", "")
 
-# Colores para embeds
 COLOR_LONG_OPEN    = 0x00E676
 COLOR_SHORT_OPEN   = 0xFF1744
 COLOR_CLOSE_WIN    = 0x00BFA5
@@ -31,7 +29,6 @@ COLOR_INFO         = 0x7C4DFF
 
 
 class DiscordSender:
-    """Envía embeds a Discord a través de un webhook."""
 
     def __init__(self, webhook_url: str = ""):
         self.webhook_url = webhook_url or WEBHOOK_URL
@@ -77,12 +74,10 @@ class DiscordSender:
         label   = "LONG" if is_long else "SHORT"
         color   = COLOR_LONG_OPEN if is_long else COLOR_SHORT_OPEN
         pair    = _format_pair(symbol)
-
         try:
             pct_str = f"{(float(margin) / balance * 100):.1f}%" if balance > 0 else "N/A"
         except (ValueError, ZeroDivisionError):
             pct_str = "N/A"
-
         embed = {
             "title": f"{emoji} {label}  —  {pair}",
             "description": _build_links(symbol),
@@ -101,30 +96,24 @@ class DiscordSender:
         await self.send_embed(embed)
 
     # ══════════════════════════════════════════════════════════════════════
-    #  CIERRE DE POSICIÓN
+    #  CIERRE TOTAL
     # ══════════════════════════════════════════════════════════════════════
 
     async def send_position_close(self, symbol: str, side: str,
-                                   realized_pnl: float, entry_price: float,
-                                   exit_price: float, leverage: str):
+                                   realized_pnl: float, margin: float,
+                                   leverage: str):
         is_win    = realized_pnl >= 0
         emoji     = "✅" if is_win else "❌"
         color     = COLOR_CLOSE_WIN if is_win else COLOR_CLOSE_LOSS
         pnl_str   = f"+{realized_pnl:.2f}" if is_win else f"{realized_pnl:.2f}"
         pair      = _format_pair(symbol)
         direction = "LONG" if side.upper() in ("BUY", "LONG") else "SHORT"
-
         pnl_pct = ""
         try:
-            lev = float(leverage) if leverage else 1
-            if entry_price > 0:
-                raw = ((exit_price - entry_price) / entry_price) * 100 * lev
-                if direction == "SHORT":
-                    raw = -raw
-                pnl_pct = f" ({raw:+.2f}%)"
+            if margin > 0:
+                pnl_pct = f" ({(realized_pnl / margin) * 100:+.2f}%)"
         except (ValueError, ZeroDivisionError):
             pass
-
         embed = {
             "title": f"{emoji} CIERRE {direction}  —  {pair}",
             "description": _build_links(symbol),
@@ -132,12 +121,82 @@ class DiscordSender:
             "fields": [
                 {"name": "📊 Par",            "value": f"`{pair}`",                    "inline": True},
                 {"name": "📐 Apalancamiento", "value": f"`x{leverage}`",               "inline": True},
-                {"name": "💰 Entrada",        "value": f"`{entry_price}`",             "inline": True},
-                {"name": "🏁 Salida",         "value": f"`{exit_price}`",              "inline": True},
+                {"name": "📦 % cerrado",      "value": f"`100%`",                      "inline": True},
+                {"name": "🏦 Margen",         "value": f"`{margin:.2f} USDT`",         "inline": True},
                 {"name": "💵 PnL",            "value": f"`{pnl_str} USDT{pnl_pct}`",  "inline": True},
                 {"name": "📈 Resultado",      "value": "GANANCIA ✅" if is_win else "PÉRDIDA ❌", "inline": True},
             ],
             "footer": {"text": f"{YOUTUBER_NAME} • Señal automática"},
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        await self.send_embed(embed)
+
+    # ══════════════════════════════════════════════════════════════════════
+    #  CIERRE PARCIAL
+    # ══════════════════════════════════════════════════════════════════════
+
+    async def send_position_partial_close(self, symbol: str, side: str,
+                                           leverage: str, pct_closed: str,
+                                           realized_pnl: float, margin: float):
+        is_win    = realized_pnl >= 0
+        emoji     = "✅" if is_win else "❌"
+        color     = COLOR_CLOSE_WIN if is_win else COLOR_CLOSE_LOSS
+        pnl_str   = f"+{realized_pnl:.2f}" if is_win else f"{realized_pnl:.2f}"
+        pair      = _format_pair(symbol)
+        direction = "LONG" if side.upper() in ("BUY", "LONG") else "SHORT"
+        pnl_pct = ""
+        try:
+            if margin > 0:
+                pnl_pct = f" ({(realized_pnl / margin) * 100:+.2f}%)"
+        except (ValueError, ZeroDivisionError):
+            pass
+        embed = {
+            "title": f"{emoji} CIERRE PARCIAL {direction}  —  {pair}",
+            "description": _build_links(symbol),
+            "color": color,
+            "fields": [
+                {"name": "📊 Par",             "value": f"`{pair}`",                    "inline": True},
+                {"name": "📐 Apalancamiento",  "value": f"`x{leverage}`",               "inline": True},
+                {"name": "📦 % cerrado",       "value": f"`{pct_closed}`",              "inline": True},
+                {"name": "🏦 Margen cerrado",  "value": f"`{margin:.2f} USDT`",         "inline": True},
+                {"name": "💵 PnL",             "value": f"`{pnl_str} USDT{pnl_pct}`",  "inline": True},
+                {"name": "📈 Resultado",       "value": "GANANCIA ✅" if is_win else "PÉRDIDA ❌", "inline": True},
+            ],
+            "footer": {"text": f"{YOUTUBER_NAME} • Señal automática"},
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        await self.send_embed(embed)
+
+    # ══════════════════════════════════════════════════════════════════════
+    #  COMPRA/VENTA A MERCADO (promediado / DCA)
+    # ══════════════════════════════════════════════════════════════════════
+
+    async def send_position_add(self, symbol: str, side: str, leverage: str,
+                                 added_qty: str, total_qty: str,
+                                 entry_price: str, margin: str,
+                                 pct_account: str):
+        is_long   = side.upper() in ("BUY", "LONG")
+        action    = "Compra" if is_long else "Venta"
+        emoji     = "🟢" if is_long else "🔴"
+        direction = "LONG" if is_long else "SHORT"
+        pair      = _format_pair(symbol)
+        color     = COLOR_LONG_OPEN if is_long else COLOR_SHORT_OPEN
+
+        embed = {
+            "title": f"{emoji} {action} a mercado  —  {pair}",
+            "description": _build_links(symbol),
+            "color": color,
+            "fields": [
+                {"name": "📊 Par",                 "value": f"`{pair}`",            "inline": True},
+                {"name": f"{emoji} Dirección",      "value": f"`{direction}`",       "inline": True},
+                {"name": "📐 Apalancamiento",      "value": f"`x{leverage}`",        "inline": True},
+                {"name": "💰 Nuevo precio entrada", "value": f"`{entry_price}`",     "inline": True},
+                {"name": "📦 Cantidad añadida",     "value": f"`{added_qty}`",       "inline": True},
+                {"name": "📦 Cantidad total",       "value": f"`{total_qty}`",       "inline": True},
+                {"name": "🏦 Margen total",         "value": f"`{margin} USDT`",     "inline": True},
+                {"name": "📊 % de cuenta",          "value": f"`{pct_account}`",     "inline": True},
+            ],
+            "footer": {"text": f"{YOUTUBER_NAME} • Promediado"},
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self.send_embed(embed)
@@ -154,10 +213,9 @@ class DiscordSender:
         direction = "LONG" if is_long else "SHORT"
         action    = "APERTURA" if trade_side.upper() == "OPEN" else "CIERRE"
         pair      = _format_pair(symbol)
-
         try:
-            p   = float(price) if price else 0
-            q   = float(qty) if qty else 0
+            p = float(price) if price else 0
+            q = float(qty) if qty else 0
             lev = float(leverage) if leverage else 1
             margin     = round(p * q / lev, 2) if p > 0 else 0
             pct_cuenta = f"{(margin / balance * 100):.1f}%" if balance > 0 else "N/A"
@@ -165,7 +223,6 @@ class DiscordSender:
         except (ValueError, ZeroDivisionError):
             margin_str = "N/A"
             pct_cuenta = "N/A"
-
         embed = {
             "title": f"📝 Orden {order_type} — {action} {direction}",
             "description": _build_links(symbol),
@@ -196,10 +253,9 @@ class DiscordSender:
         direction = "LONG" if is_long else "SHORT"
         action    = "APERTURA" if trade_side.upper() == "OPEN" else "CIERRE"
         pair      = _format_pair(symbol)
-
         try:
-            p   = float(avg_price) if avg_price else 0
-            q   = float(qty) if qty else 0
+            p = float(avg_price) if avg_price else 0
+            q = float(qty) if qty else 0
             lev = float(leverage) if leverage else 1
             margin     = round(p * q / lev, 2) if p > 0 else 0
             pct_cuenta = f"{(margin / balance * 100):.1f}%" if balance > 0 else "N/A"
@@ -207,7 +263,6 @@ class DiscordSender:
         except (ValueError, ZeroDivisionError):
             margin_str = "N/A"
             pct_cuenta = "N/A"
-
         embed = {
             "title": f"⚡ Orden Ejecutada — {action} {direction}",
             "description": _build_links(symbol),
@@ -235,7 +290,6 @@ class DiscordSender:
                                     qty: str):
         pair      = _format_pair(symbol)
         direction = "LONG" if side.upper() == "BUY" else "SHORT"
-
         embed = {
             "title": f"🚫 Orden Cancelada — {pair}",
             "description": _build_links(symbol),
@@ -252,86 +306,90 @@ class DiscordSender:
         await self.send_embed(embed)
 
     # ══════════════════════════════════════════════════════════════════════
-    #  NUEVO TP
+    #  NUEVO TP  (con precio de la posición/orden)
     # ══════════════════════════════════════════════════════════════════════
 
     async def send_tp_new(self, symbol: str, side: str, tp_price: str,
-                           tp_qty: str, position_qty: str, leverage: str):
+                           pct_position: str, leverage: str,
+                           entry_price: str = ""):
         pair      = _format_pair(symbol)
         direction = "LONG" if side.upper() in ("BUY", "LONG") else "SHORT"
-        pct_pos   = _calc_position_pct(tp_qty, position_qty)
-
+        fields = [
+            {"name": "📊 Par",              "value": f"`{pair}`",          "inline": True},
+            {"name": "📐 Dirección",        "value": f"`{direction}`",     "inline": True},
+            {"name": "📐 Apalancamiento",   "value": f"`x{leverage}`",     "inline": True},
+        ]
+        if entry_price:
+            fields.append({"name": "💰 Precio posición", "value": f"`{entry_price}`", "inline": True})
+        fields.extend([
+            {"name": "🎯 Precio TP",        "value": f"`{tp_price}`",      "inline": True},
+            {"name": "📊 % de la posición", "value": f"`{pct_position}`",  "inline": True},
+        ])
         embed = {
             "title": f"🎯 Nuevo TP  —  {pair}",
             "description": _build_links(symbol),
             "color": COLOR_TP,
-            "fields": [
-                {"name": "📊 Par",              "value": f"`{pair}`",       "inline": True},
-                {"name": "📐 Dirección",        "value": f"`{direction}`",  "inline": True},
-                {"name": "📐 Apalancamiento",   "value": f"`x{leverage}`",  "inline": True},
-                {"name": "💰 Precio TP",        "value": f"`{tp_price}`",   "inline": True},
-                {"name": "📦 Cantidad TP",      "value": f"`{tp_qty}`",     "inline": True},
-                {"name": "📊 % de la posición", "value": f"`{pct_pos}`",    "inline": True},
-            ],
+            "fields": fields,
             "footer": {"text": f"{YOUTUBER_NAME} • Take Profit"},
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self.send_embed(embed)
 
     # ══════════════════════════════════════════════════════════════════════
-    #  NUEVO SL
+    #  NUEVO SL  (con precio de la posición/orden)
     # ══════════════════════════════════════════════════════════════════════
 
     async def send_sl_new(self, symbol: str, side: str, sl_price: str,
-                           sl_qty: str, position_qty: str, leverage: str):
+                           pct_position: str, leverage: str,
+                           entry_price: str = ""):
         pair      = _format_pair(symbol)
         direction = "LONG" if side.upper() in ("BUY", "LONG") else "SHORT"
-        pct_pos   = _calc_position_pct(sl_qty, position_qty)
-
+        fields = [
+            {"name": "📊 Par",              "value": f"`{pair}`",          "inline": True},
+            {"name": "📐 Dirección",        "value": f"`{direction}`",     "inline": True},
+            {"name": "📐 Apalancamiento",   "value": f"`x{leverage}`",     "inline": True},
+        ]
+        if entry_price:
+            fields.append({"name": "💰 Precio posición", "value": f"`{entry_price}`", "inline": True})
+        fields.extend([
+            {"name": "🛑 Precio SL",        "value": f"`{sl_price}`",      "inline": True},
+            {"name": "📊 % de la posición", "value": f"`{pct_position}`",  "inline": True},
+        ])
         embed = {
             "title": f"🛑 Nuevo SL  —  {pair}",
             "description": _build_links(symbol),
             "color": COLOR_SL,
-            "fields": [
-                {"name": "📊 Par",              "value": f"`{pair}`",       "inline": True},
-                {"name": "📐 Dirección",        "value": f"`{direction}`",  "inline": True},
-                {"name": "📐 Apalancamiento",   "value": f"`x{leverage}`",  "inline": True},
-                {"name": "💰 Precio SL",        "value": f"`{sl_price}`",   "inline": True},
-                {"name": "📦 Cantidad SL",      "value": f"`{sl_qty}`",     "inline": True},
-                {"name": "📊 % de la posición", "value": f"`{pct_pos}`",    "inline": True},
-            ],
+            "fields": fields,
             "footer": {"text": f"{YOUTUBER_NAME} • Stop Loss"},
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self.send_embed(embed)
 
     # ══════════════════════════════════════════════════════════════════════
-    #  ACTUALIZACIÓN TP/SL
+    #  ACTUALIZACIÓN TP/SL  (con precio de la posición/orden)
     # ══════════════════════════════════════════════════════════════════════
 
     async def send_tp_sl_update(self, symbol: str, side: str, leverage: str,
-                                 tp_price: str = "", tp_qty: str = "",
-                                 sl_price: str = "", sl_qty: str = "",
-                                 position_qty: str = ""):
+                                 tp_price: str = "", pct_tp: str = "",
+                                 sl_price: str = "", pct_sl: str = "",
+                                 entry_price: str = ""):
         pair      = _format_pair(symbol)
         direction = "LONG" if side.upper() in ("BUY", "LONG") else "SHORT"
-
         fields = [
             {"name": "📊 Par",            "value": f"`{pair}`",       "inline": True},
             {"name": "📐 Dirección",      "value": f"`{direction}`",  "inline": True},
             {"name": "📐 Apalancamiento", "value": f"`x{leverage}`",  "inline": True},
         ]
+        if entry_price:
+            fields.append({"name": "💰 Precio posición", "value": f"`{entry_price}`", "inline": True})
         if tp_price:
-            pct = _calc_position_pct(tp_qty, position_qty)
-            fields.append({"name": "🎯 Nuevo precio TP", "value": f"`{tp_price}`", "inline": True})
-            fields.append({"name": "📦 Cantidad TP",     "value": f"`{tp_qty}`",   "inline": True})
-            fields.append({"name": "📊 % de la posición","value": f"`{pct}`",      "inline": True})
+            fields.append({"name": "🎯 Nuevo precio TP", "value": f"`{tp_price}`",  "inline": True})
+            if pct_tp:
+                fields.append({"name": "📊 % de la posición","value": f"`{pct_tp}`", "inline": True})
         if sl_price:
-            pct = _calc_position_pct(sl_qty, position_qty)
-            fields.append({"name": "🛑 Nuevo precio SL", "value": f"`{sl_price}`", "inline": True})
-            fields.append({"name": "📦 Cantidad SL",     "value": f"`{sl_qty}`",   "inline": True})
-            fields.append({"name": "📊 % de la posición","value": f"`{pct}`",      "inline": True})
-
+            fields.append({"name": "🛑 Nuevo precio SL", "value": f"`{sl_price}`",  "inline": True})
+            if pct_sl:
+                fields.append({"name": "📊 % de la posición","value": f"`{pct_sl}`", "inline": True})
         embed = {
             "title": f"✏️ Actualización TP/SL  —  {pair}",
             "description": _build_links(symbol),
@@ -343,35 +401,53 @@ class DiscordSender:
         await self.send_embed(embed)
 
     # ══════════════════════════════════════════════════════════════════════
-    #  TP/SL CANCELADO
+    #  TP / SL ELIMINADO
     # ══════════════════════════════════════════════════════════════════════
 
-    async def send_tp_sl_cancelled(self, symbol: str, side: str,
-                                    tp_price: str = "", sl_price: str = ""):
+    async def send_tp_cancelled(self, symbol: str, side: str, tp_price: str,
+                                 pct_position: str):
         pair      = _format_pair(symbol)
         direction = "LONG" if side.upper() in ("BUY", "LONG") else "SHORT"
-
         fields = [
             {"name": "📊 Par",       "value": f"`{pair}`",       "inline": True},
             {"name": "📐 Dirección", "value": f"`{direction}`",  "inline": True},
+            {"name": "🎯 Precio TP", "value": f"`{tp_price}`",   "inline": True},
         ]
-        if tp_price:
-            fields.append({"name": "🎯 TP cancelado", "value": f"`{tp_price}`", "inline": True})
-        if sl_price:
-            fields.append({"name": "🛑 SL cancelado", "value": f"`{sl_price}`", "inline": True})
-
+        if pct_position:
+            fields.append({"name": "📊 % de la posición", "value": f"`{pct_position}`", "inline": True})
         embed = {
-            "title": f"🚫 TP/SL Cancelado  —  {pair}",
+            "title": f"🚫 TP Eliminado  —  {pair}",
             "description": _build_links(symbol),
             "color": COLOR_ORDER_CANCEL,
             "fields": fields,
-            "footer": {"text": f"{YOUTUBER_NAME} • Cancelado"},
+            "footer": {"text": f"{YOUTUBER_NAME} • TP Eliminado"},
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        await self.send_embed(embed)
+
+    async def send_sl_cancelled(self, symbol: str, side: str, sl_price: str,
+                                 pct_position: str):
+        pair      = _format_pair(symbol)
+        direction = "LONG" if side.upper() in ("BUY", "LONG") else "SHORT"
+        fields = [
+            {"name": "📊 Par",       "value": f"`{pair}`",       "inline": True},
+            {"name": "📐 Dirección", "value": f"`{direction}`",  "inline": True},
+            {"name": "🛑 Precio SL", "value": f"`{sl_price}`",   "inline": True},
+        ]
+        if pct_position:
+            fields.append({"name": "📊 % de la posición", "value": f"`{pct_position}`", "inline": True})
+        embed = {
+            "title": f"🚫 SL Eliminado  —  {pair}",
+            "description": _build_links(symbol),
+            "color": COLOR_ORDER_CANCEL,
+            "fields": fields,
+            "footer": {"text": f"{YOUTUBER_NAME} • SL Eliminado"},
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self.send_embed(embed)
 
     # ══════════════════════════════════════════════════════════════════════
-    #  POSICIÓN ACTUALIZADA (promediado, cierre parcial)
+    #  POSICIÓN ACTUALIZADA
     # ══════════════════════════════════════════════════════════════════════
 
     async def send_position_update(self, symbol: str, side: str, qty: str,
@@ -380,7 +456,6 @@ class DiscordSender:
         pair      = _format_pair(symbol)
         direction = "LONG" if side.upper() in ("BUY", "LONG") else "SHORT"
         emoji     = "🟢" if direction == "LONG" else "🔴"
-
         embed = {
             "title": f"🔄 Posición Actualizada — {pair}",
             "description": _build_links(symbol),
@@ -412,26 +487,12 @@ class DiscordSender:
         await self.send_embed(embed)
 
 
-# ── utilidades ────────────────────────────────────────────────────────────
-
 def _format_pair(symbol: str) -> str:
     s = symbol.upper()
     for quote in ("USDT", "USDC", "BUSD", "USD"):
         if s.endswith(quote):
             return f"{s[:-len(quote)]}/{quote}"
     return s
-
-
-def _calc_position_pct(qty_str: str, total_qty_str: str) -> str:
-    try:
-        qty   = float(qty_str) if qty_str else 0
-        total = float(total_qty_str) if total_qty_str else 0
-        if total > 0 and qty > 0:
-            return f"{(qty / total * 100):.0f}%"
-    except (ValueError, ZeroDivisionError):
-        pass
-    return "N/A"
-
 
 def _build_links(symbol: str) -> str:
     symbol_clean = symbol.upper().replace("/", "")
