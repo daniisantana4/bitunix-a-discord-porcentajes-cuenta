@@ -19,6 +19,8 @@ class EventProcessor:
         # Cache simple para rastrear posiciones y evitar duplicados
         self._known_positions: dict[str, dict] = {}   # positionId → info
         self._known_orders: dict[str, str] = {}        # orderId → último status
+        # Evitar enviar doble embed de apertura (Order + Position llegan casi juntos)
+        self._recent_open_signals: set[str] = set()    # "symbol:side" enviados recientemente
 
     # ══════════════════════════════════════════════════════════════════════
     #  ORDER CHANNEL
@@ -123,16 +125,27 @@ class EventProcessor:
                 "symbol": symbol, "side": side, "leverage": leverage,
                 "qty": qty, "margin": margin,
             }
-            # La señal de apertura principal se envía desde handle_order (FILLED),
-            # pero aquí enriquecemos con datos de posición si no se envió ya
-            # (por ejemplo, si la orden era LIMIT y se llenó mientras estábamos offline)
+
+            # Si el Order Channel ya envió el embed de apertura, no duplicar
+            dedup_key = f"{symbol}:{side}"
+            if dedup_key in self._recent_open_signals:
+                self._recent_open_signals.discard(dedup_key)
+                print(f"   [PosProcessor] ⏭️  Apertura ya enviada desde Order Channel, skip")
+                return
+
             entry_price = await self.rest.get_ticker_price(symbol)
-            balance     = await self.rest.get_balance()
+            available   = await self.rest.get_balance()
+
+            # balance_total = disponible + margen (ya descontado)
+            try:
+                balance_total = available + float(margin)
+            except (ValueError, TypeError):
+                balance_total = available
 
             await self.discord.send_position_open(
                 symbol=symbol, side=side, leverage=leverage,
                 qty=qty, margin=margin, entry_price=entry_price,
-                balance=balance,
+                balance=balance_total,
             )
 
         # ── Posición ACTUALIZADA (promediado, cierre parcial) ─────────────
@@ -183,14 +196,22 @@ class EventProcessor:
                                             leverage: str, qty: str,
                                             price: float):
         """Publica apertura de posición enriquecida con balance."""
-        balance = await self.rest.get_balance()
-        lev     = float(leverage) if leverage else 1
-        margin  = round(price * float(qty) / lev, 2) if price > 0 else 0
+        # Marcar como enviado para evitar duplicado con Position Channel
+        dedup_key = f"{symbol}:{side}"
+        self._recent_open_signals.add(dedup_key)
+
+        available = await self.rest.get_balance()
+        lev       = float(leverage) if leverage else 1
+        margin    = round(price * float(qty) / lev, 2) if price > 0 else 0
+
+        # El balance "disponible" ya tiene el margen descontado.
+        # Para calcular el % real usamos: balance_total = disponible + margen
+        balance_total = available + margin
 
         await self.discord.send_position_open(
             symbol=symbol, side=side, leverage=leverage,
             qty=qty, margin=str(margin), entry_price=price,
-            balance=balance,
+            balance=balance_total,
         )
 
 
