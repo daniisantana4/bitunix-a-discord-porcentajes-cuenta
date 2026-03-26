@@ -1,9 +1,6 @@
 """
 Lógica de negocio: interpreta los eventos crudos del WebSocket de Bitunix
-y decide qué publicar en Discord (y con qué datos).
-
-Enriquece la información usando el cliente REST cuando es necesario
-(balance actual, precio de mercado, datos de posición).
+y decide qué publicar en Discord.
 """
 
 from bitunix_rest import BitunixREST
@@ -11,50 +8,42 @@ from discord_sender import DiscordSender
 
 
 class EventProcessor:
-    """Procesa eventos de Order Channel y Position Channel."""
+    """Procesa eventos de Order Channel, Position Channel y TP/SL Channel."""
 
     def __init__(self, rest: BitunixREST, discord: DiscordSender):
         self.rest    = rest
         self.discord = discord
-        # Cache simple para rastrear posiciones y evitar duplicados
         self._known_positions: dict[str, dict] = {}   # positionId → info
         self._known_orders: dict[str, str] = {}        # orderId → último status
-        # Evitar enviar doble embed de apertura (Order + Position llegan casi juntos)
-        self._recent_open_signals: set[str] = set()    # "symbol:side" enviados recientemente
+        self._known_tp_sl: dict[str, dict] = {}        # orderId → último estado TP/SL
+        self._recent_open_signals: set[str] = set()
 
     # ══════════════════════════════════════════════════════════════════════
     #  ORDER CHANNEL
     # ══════════════════════════════════════════════════════════════════════
 
     async def handle_order(self, data: dict):
-        """
-        Eventos del Order Channel:
-          event: CREATE / UPDATE / CLOSE
-          orderStatus: INIT, NEW, PART_FILLED, FILLED, CANCELED, PART_FILLED_CANCELED
-        """
-        order_id     = data.get("orderId", "")
-        event        = data.get("event", "").upper()
-        status       = data.get("orderStatus", "").upper()
-        symbol       = data.get("symbol", "")
-        side         = data.get("side", "")         # BUY / SELL
-        order_type   = data.get("type", "")         # LIMIT / MARKET
-        price        = data.get("price", "0")
-        avg_price    = data.get("averagePrice", "0")
-        qty          = data.get("qty", "0")
-        leverage     = data.get("leverage", "1")
-        fee          = data.get("fee", "0")
-        trade_side   = _infer_trade_side(data)
+        order_id   = data.get("orderId", "")
+        event      = data.get("event", "").upper()
+        status     = data.get("orderStatus", "").upper()
+        symbol     = data.get("symbol", "")
+        side       = data.get("side", "")
+        order_type = data.get("type", "")
+        price      = data.get("price", "0")
+        avg_price  = data.get("averagePrice", "0")
+        qty        = data.get("qty", "0")
+        leverage   = data.get("leverage", "1")
+        fee        = data.get("fee", "0")
+        trade_side = _infer_trade_side(data)
 
-        prev_status  = self._known_orders.get(order_id, "")
+        prev_status = self._known_orders.get(order_id, "")
         self._known_orders[order_id] = status
 
         print(f"   [OrderProcessor] event={event} status={status} prev={prev_status} "
               f"symbol={symbol} side={side} type={order_type} tradeSide={trade_side}")
 
-        # ── Orden NUEVA (pendiente) ────────────────────────────────────────
+        # ── Orden NUEVA (pendiente) ───────────────────────────────────────
         if status == "NEW" and prev_status not in ("NEW", "PART_FILLED", "FILLED"):
-            # Solo publicar órdenes LIMIT como "pendientes";
-            # las MARKET pasan directamente a FILLED casi al instante
             if order_type.upper() == "LIMIT":
                 balance = await self.rest.get_balance()
                 await self.discord.send_order_placed(
@@ -71,8 +60,6 @@ class EventProcessor:
                 qty=qty, leverage=leverage, fee=fee,
                 trade_side=trade_side, balance=balance,
             )
-
-            # Si es una apertura a mercado, además publicar la posición con balance
             if trade_side == "OPEN":
                 await self._send_enriched_position_open(
                     symbol=symbol, side=side, leverage=leverage,
@@ -95,7 +82,6 @@ class EventProcessor:
                     symbol=symbol, side=side, price=price, qty=qty,
                 )
 
-        # Limpiar órdenes terminales del cache para no acumular memoria
         if status in ("FILLED", "CANCELED", "PART_FILLED_CANCELED"):
             self._known_orders.pop(order_id, None)
 
@@ -104,14 +90,10 @@ class EventProcessor:
     # ══════════════════════════════════════════════════════════════════════
 
     async def handle_position(self, data: dict):
-        """
-        Eventos del Position Channel:
-          event: OPEN / UPDATE / CLOSE
-        """
         event       = data.get("event", "").upper()
         position_id = data.get("positionId", "")
         symbol      = data.get("symbol", "")
-        side        = data.get("side", "")        # LONG / SHORT
+        side        = data.get("side", "")
         leverage    = data.get("leverage", "1")
         qty         = data.get("qty", "0")
         margin      = data.get("margin", "0")
@@ -127,8 +109,6 @@ class EventProcessor:
                 "symbol": symbol, "side": side, "leverage": leverage,
                 "qty": qty, "margin": margin,
             }
-
-            # Si el Order Channel ya envió el embed de apertura, no duplicar
             dedup_key = f"{symbol}:{side}"
             if dedup_key in self._recent_open_signals:
                 self._recent_open_signals.discard(dedup_key)
@@ -137,8 +117,6 @@ class EventProcessor:
 
             entry_price = await self.rest.get_ticker_price(symbol)
             available   = await self.rest.get_balance()
-
-            # balance_total = disponible + margen (ya descontado)
             try:
                 balance_total = available + float(margin)
             except (ValueError, TypeError):
@@ -150,7 +128,7 @@ class EventProcessor:
                 balance=balance_total,
             )
 
-        # ── Posición ACTUALIZADA (promediado, cierre parcial) ─────────────
+        # ── Posición ACTUALIZADA ──────────────────────────────────────────
         elif event == "UPDATE":
             self._known_positions[position_id] = {
                 "symbol": symbol, "side": side, "leverage": leverage,
@@ -165,49 +143,119 @@ class EventProcessor:
         # ── Posición CERRADA ──────────────────────────────────────────────
         elif event == "CLOSE":
             exit_price = await self.rest.get_ticker_price(symbol)
-
-            # Intentar recuperar el precio de entrada del cache o de la API
-            cached = self._known_positions.pop(position_id, {})
-            entry_price = 0.0
-            # Si hay posiciones en el historial podríamos obtenerlo, pero
-            # el precio de entrada no viene directo en el WS; calculamos
-            # una aproximación a partir del realizedPNL si es posible
-            if exit_price > 0:
-                entry_price = exit_price  # fallback, se mejora abajo
-
-            # Obtener posiciones históricas para el precio de entrada real
-            try:
-                positions = await self.rest.get_pending_positions(symbol)
-                # Si ya no hay posición, usamos la info que tenemos
-                # El realizedPNL del WS es nuestro mejor dato
-                pass
-            except Exception:
-                pass
+            self._known_positions.pop(position_id, {})
 
             await self.discord.send_position_close(
                 symbol=symbol, side=side,
                 realized_pnl=float(realized),
-                entry_price=entry_price,
+                entry_price=exit_price,
                 exit_price=exit_price,
                 leverage=leverage,
             )
 
+    # ══════════════════════════════════════════════════════════════════════
+    #  TP/SL CHANNEL
+    # ══════════════════════════════════════════════════════════════════════
+
+    async def handle_tp_sl(self, data: dict):
+        """
+        Eventos del TP/SL Channel:
+          event: CREATE / UPDATE / CLOSE
+          status: INIT, NEW, PART_FILLED, CANCELED, FILLED
+        """
+        event       = data.get("event", "").upper()
+        status      = data.get("status", "").upper()
+        order_id    = data.get("orderId", "")
+        position_id = data.get("positionId", "")
+        symbol      = data.get("symbol", "")
+        side        = data.get("side", "")
+        leverage    = data.get("leverage", "1")
+        tp_price    = data.get("tpPrice", "")
+        tp_qty      = data.get("tpQty", "")
+        sl_price    = data.get("slPrice", "")
+        sl_qty      = data.get("slQty", "")
+
+        prev = self._known_tp_sl.get(order_id)
+        self._known_tp_sl[order_id] = {
+            "event": event, "status": status,
+            "tpPrice": tp_price, "slPrice": sl_price,
+        }
+
+        # Obtener la cantidad total de la posición para calcular %
+        position_qty = await self._get_position_qty(position_id, symbol)
+
+        print(f"   [TP/SL Processor] event={event} status={status} "
+              f"tp={tp_price}×{tp_qty} sl={sl_price}×{sl_qty} posQty={position_qty}")
+
+        # ── NUEVO TP/SL (CREATE + NEW) ────────────────────────────────────
+        if event == "CREATE" or (status == "NEW" and prev is None):
+            if tp_price and tp_qty:
+                await self.discord.send_tp_new(
+                    symbol=symbol, side=side, tp_price=tp_price,
+                    tp_qty=tp_qty, position_qty=position_qty,
+                    leverage=leverage,
+                )
+            if sl_price and sl_qty:
+                await self.discord.send_sl_new(
+                    symbol=symbol, side=side, sl_price=sl_price,
+                    sl_qty=sl_qty, position_qty=position_qty,
+                    leverage=leverage,
+                )
+
+        # ── ACTUALIZACIÓN TP/SL ───────────────────────────────────────────
+        elif event == "UPDATE":
+            changed = False
+            if prev:
+                changed = (prev.get("tpPrice") != tp_price or
+                           prev.get("slPrice") != sl_price)
+            if changed or not prev:
+                await self.discord.send_tp_sl_update(
+                    symbol=symbol, side=side, leverage=leverage,
+                    tp_price=tp_price, tp_qty=tp_qty,
+                    sl_price=sl_price, sl_qty=sl_qty,
+                    position_qty=position_qty,
+                )
+
+        # ── CANCELADO ─────────────────────────────────────────────────────
+        elif status in ("CANCELED",):
+            await self.discord.send_tp_sl_cancelled(
+                symbol=symbol, side=side,
+                tp_price=tp_price, sl_price=sl_price,
+            )
+            self._known_tp_sl.pop(order_id, None)
+
+        # ── EJECUTADO (el TP o SL se ha disparado) ────────────────────────
+        elif status == "FILLED":
+            # La ejecución real la manejará el Order/Position Channel,
+            # aquí solo limpiamos el cache
+            self._known_tp_sl.pop(order_id, None)
+
     # ── helpers internos ──────────────────────────────────────────────────
+
+    async def _get_position_qty(self, position_id: str, symbol: str) -> str:
+        """Obtiene la cantidad total de la posición (cache o API)."""
+        if position_id in self._known_positions:
+            return self._known_positions[position_id].get("qty", "0")
+        # Consultar API
+        positions = await self.rest.get_pending_positions(symbol)
+        for pos in positions:
+            if pos.get("positionId") == position_id:
+                self._known_positions[position_id] = pos
+                return pos.get("qty", "0")
+        # Si no hay posición específica, devolver la primera del símbolo
+        if positions:
+            return positions[0].get("qty", "0")
+        return "0"
 
     async def _send_enriched_position_open(self, symbol: str, side: str,
                                             leverage: str, qty: str,
                                             price: float):
-        """Publica apertura de posición enriquecida con balance."""
-        # Marcar como enviado para evitar duplicado con Position Channel
         dedup_key = f"{symbol}:{side}"
         self._recent_open_signals.add(dedup_key)
 
         available = await self.rest.get_balance()
         lev       = float(leverage) if leverage else 1
         margin    = round(price * float(qty) / lev, 2) if price > 0 else 0
-
-        # El balance "disponible" ya tiene el margen descontado.
-        # Para calcular el % real usamos: balance_total = disponible + margen
         balance_total = available + margin
 
         await self.discord.send_position_open(
@@ -218,19 +266,10 @@ class EventProcessor:
 
 
 def _infer_trade_side(data: dict) -> str:
-    """
-    Intenta determinar si la orden es de APERTURA (OPEN) o CIERRE (CLOSE).
-    El WS no siempre envía tradeSide explícitamente; lo inferimos del contexto.
-    """
-    # Si viene explícito en el mensaje (algunos eventos lo incluyen)
     ts = data.get("tradeSide", "")
     if ts:
         return ts.upper()
-
-    # Inferencia: si hay positionId y el evento es CLOSE, es cierre
     event = data.get("event", "").upper()
     if event == "CLOSE":
         return "CLOSE"
-
-    # Por defecto asumimos apertura
     return "OPEN"
