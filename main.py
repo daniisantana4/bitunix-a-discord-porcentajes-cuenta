@@ -61,11 +61,15 @@ async def main():
         except NotImplementedError:
             pass
 
+    # Lanzar polling de TP/SL en background
+    poll_task = asyncio.create_task(processor.poll_loop())
+
     try:
         await ws.run_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        poll_task.cancel()
         await discord.send_bot_status("🔴 Bot desconectado")
         await rest.close()
         await discord.close()
