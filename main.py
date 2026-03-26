@@ -2,9 +2,6 @@
 """
 ╔══════════════════════════════════════════════════════════════╗
 ║  Bitunix → Discord Signal Bot                                ║
-║                                                              ║
-║  Monitoriza operaciones en Bitunix en tiempo real            ║
-║  y las publica automáticamente en Discord.                   ║
 ╚══════════════════════════════════════════════════════════════╝
 """
 
@@ -24,7 +21,6 @@ from event_processor import EventProcessor
 
 
 async def main():
-    # ── Validar configuración ─────────────────────────────────────────────
     required = ["BITUNIX_API_KEY", "BITUNIX_SECRET_KEY", "DISCORD_WEBHOOK_URL"]
     missing  = [k for k in required if not os.getenv(k)]
     if missing:
@@ -32,7 +28,6 @@ async def main():
         print("   Copia .env.example a .env y rellénalo.")
         sys.exit(1)
 
-    # ── Inicializar componentes ───────────────────────────────────────────
     rest      = BitunixREST()
     discord   = DiscordSender()
     processor = EventProcessor(rest=rest, discord=discord)
@@ -40,9 +35,9 @@ async def main():
     ws = BitunixWS(
         on_order_event=processor.handle_order,
         on_position_event=processor.handle_position,
+        on_tp_sl_event=processor.handle_tp_sl,
     )
 
-    # ── Mensaje de inicio ─────────────────────────────────────────────────
     print("╔══════════════════════════════════════════════════════════════╗")
     print("║        🤖 Bitunix → Discord Signal Bot                     ║")
     print("╚══════════════════════════════════════════════════════════════╝")
@@ -52,13 +47,8 @@ async def main():
     print(f"💰 Balance USDT disponible: {balance:.2f}")
     print()
 
-    await discord.send_bot_status(
-        f"🟢 Bot iniciado correctamente\n"
-        f"💰 Balance: **{balance:.2f} USDT**\n"
-        f"📡 Escuchando operaciones en tiempo real…"
-    )
+    await discord.send_bot_status("🟢 Bot iniciado correctamente")
 
-    # ── Manejo de señales para cierre limpio ──────────────────────────────
     loop = asyncio.get_running_loop()
 
     def _shutdown():
@@ -69,10 +59,8 @@ async def main():
         try:
             loop.add_signal_handler(sig, _shutdown)
         except NotImplementedError:
-            # Windows no soporta add_signal_handler
             pass
 
-    # ── Ejecutar WebSocket ────────────────────────────────────────────────
     try:
         await ws.run_forever()
     except KeyboardInterrupt:
