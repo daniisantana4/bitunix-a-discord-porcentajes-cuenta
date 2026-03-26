@@ -63,6 +63,7 @@ class BitunixWS:
                 {"ch": "order"},
                 {"ch": "position"},
                 {"ch": "tp_sl"},
+                {"ch": "tpsl"},
             ]
         })
 
@@ -148,7 +149,7 @@ class BitunixWS:
             except Exception as e:
                 print(f"❌ Error en on_position callback: {e}")
 
-        elif ch == "tp_sl":
+        elif ch in ("tp_sl", "tpsl", "tpSl"):
             data = msg.get("data", {})
             print(f"📨 TP/SL event: {data.get('event')} | {data.get('symbol')} | "
                   f"status={data.get('status')} | tpPrice={data.get('tpPrice')} | "
@@ -157,6 +158,10 @@ class BitunixWS:
                 await self._on_tp_sl(data)
             except Exception as e:
                 print(f"❌ Error en on_tp_sl callback: {e}")
+
+        elif ch and ch not in ("", "ping", "pong"):
+            # Log de canales desconocidos para depuración
+            print(f"📨 Canal desconocido '{ch}': {json.dumps(msg)[:300]}")
 
     async def stop(self):
         self._running = False
