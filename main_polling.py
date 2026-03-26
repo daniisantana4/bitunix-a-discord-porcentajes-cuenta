@@ -79,13 +79,17 @@ class PollingMonitor:
                     qty      = pos.get("qty", "0")
                     margin   = pos.get("margin", "0")
                     price    = await self.rest.get_ticker_price(symbol)
-                    balance  = await self.rest.get_balance()
+                    available = await self.rest.get_balance()
+                    try:
+                        balance_total = available + float(margin)
+                    except (ValueError, TypeError):
+                        balance_total = available
 
                     print(f"🆕 Nueva posición: {symbol} {side}")
                     await self.discord.send_position_open(
                         symbol=symbol, side=side, leverage=leverage,
                         qty=qty, margin=margin, entry_price=price,
-                        balance=balance,
+                        balance=balance_total,
                     )
 
             else:
