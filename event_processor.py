@@ -56,18 +56,20 @@ class EventProcessor:
             # Solo publicar órdenes LIMIT como "pendientes";
             # las MARKET pasan directamente a FILLED casi al instante
             if order_type.upper() == "LIMIT":
+                balance = await self.rest.get_balance()
                 await self.discord.send_order_placed(
                     symbol=symbol, side=side, order_type=order_type,
                     price=price, qty=qty, leverage=leverage,
-                    trade_side=trade_side,
+                    trade_side=trade_side, balance=balance,
                 )
 
         # ── Orden EJECUTADA (FILLED) ──────────────────────────────────────
         elif status == "FILLED" and prev_status != "FILLED":
+            balance = await self.rest.get_balance()
             await self.discord.send_order_filled(
                 symbol=symbol, side=side, avg_price=avg_price or price,
                 qty=qty, leverage=leverage, fee=fee,
-                trade_side=trade_side,
+                trade_side=trade_side, balance=balance,
             )
 
             # Si es una apertura a mercado, además publicar la posición con balance
@@ -79,11 +81,11 @@ class EventProcessor:
 
         # ── Parcialmente ejecutada ────────────────────────────────────────
         elif status == "PART_FILLED" and prev_status not in ("PART_FILLED", "FILLED"):
-            # Informar que se está llenando parcialmente
+            balance = await self.rest.get_balance()
             await self.discord.send_order_filled(
                 symbol=symbol, side=side, avg_price=avg_price or price,
                 qty=data.get("dealAmount", qty), leverage=leverage, fee=fee,
-                trade_side=trade_side,
+                trade_side=trade_side, balance=balance,
             )
 
         # ── Orden CANCELADA ───────────────────────────────────────────────
