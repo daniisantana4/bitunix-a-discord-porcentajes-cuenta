@@ -150,7 +150,7 @@ class DiscordSender:
 
     async def send_order_placed(self, symbol: str, side: str, order_type: str,
                                  price: str, qty: str, leverage: str,
-                                 trade_side: str):
+                                 trade_side: str, balance: float = 0):
         """Orden creada (pendiente)."""
         is_long   = side.upper() == "BUY"
         emoji     = "🟢" if is_long else "🔴"
@@ -159,16 +159,29 @@ class DiscordSender:
 
         pair_display = _format_pair(symbol)
 
+        # Calcular margen y % de cuenta
+        try:
+            p   = float(price) if price else 0
+            q   = float(qty) if qty else 0
+            lev = float(leverage) if leverage else 1
+            margin = round(p * q / lev, 2) if p > 0 else 0
+            pct_cuenta = f"{(margin / balance * 100):.1f}%" if balance > 0 else "N/A"
+            margin_str = f"{margin} USDT"
+        except (ValueError, ZeroDivisionError):
+            margin_str = "N/A"
+            pct_cuenta = "N/A"
+
         embed = {
             "title": f"📝 Orden {order_type} — {action} {direction}",
             "color": COLOR_ORDER_NEW,
             "fields": [
-                {"name": "📊 Par",           "value": f"`{pair_display}`",  "inline": True},
-                {"name": f"{emoji} Dirección","value": f"`{direction}`",    "inline": True},
-                {"name": "📐 Apalancamiento","value": f"`x{leverage}`",    "inline": True},
-                {"name": "💰 Precio",        "value": f"`{price}`",        "inline": True},
-                {"name": "📦 Cantidad",      "value": f"`{qty}`",          "inline": True},
-                {"name": "📋 Tipo",          "value": f"`{order_type}`",   "inline": True},
+                {"name": "📊 Par",            "value": f"`{pair_display}`",  "inline": True},
+                {"name": f"{emoji} Dirección", "value": f"`{direction}`",    "inline": True},
+                {"name": "📐 Apalancamiento", "value": f"`x{leverage}`",    "inline": True},
+                {"name": "💰 Precio",         "value": f"`{price}`",        "inline": True},
+                {"name": "📦 Cantidad",       "value": f"`{qty}`",          "inline": True},
+                {"name": "🏦 Margen",         "value": f"`{margin_str}`",   "inline": True},
+                {"name": "📊 % de cuenta",    "value": f"`{pct_cuenta}`",   "inline": True},
             ],
             "footer": {"text": f"{YOUTUBER_NAME} • Orden pendiente"},
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -177,7 +190,7 @@ class DiscordSender:
 
     async def send_order_filled(self, symbol: str, side: str, avg_price: str,
                                  qty: str, leverage: str, fee: str,
-                                 trade_side: str):
+                                 trade_side: str, balance: float = 0):
         """Orden ejecutada completamente."""
         is_long   = side.upper() == "BUY"
         emoji     = "🟢" if is_long else "🔴"
@@ -186,16 +199,30 @@ class DiscordSender:
 
         pair_display = _format_pair(symbol)
 
+        # Calcular margen y % de cuenta
+        try:
+            p   = float(avg_price) if avg_price else 0
+            q   = float(qty) if qty else 0
+            lev = float(leverage) if leverage else 1
+            margin = round(p * q / lev, 2) if p > 0 else 0
+            pct_cuenta = f"{(margin / balance * 100):.1f}%" if balance > 0 else "N/A"
+            margin_str = f"{margin} USDT"
+        except (ValueError, ZeroDivisionError):
+            margin_str = "N/A"
+            pct_cuenta = "N/A"
+
         embed = {
             "title": f"⚡ Orden Ejecutada — {action} {direction}",
             "color": COLOR_LONG_OPEN if is_long else COLOR_SHORT_OPEN,
             "fields": [
-                {"name": "📊 Par",           "value": f"`{pair_display}`",  "inline": True},
-                {"name": f"{emoji} Dirección","value": f"`{direction}`",    "inline": True},
-                {"name": "📐 Apalancamiento","value": f"`x{leverage}`",    "inline": True},
-                {"name": "💰 Precio medio",  "value": f"`{avg_price}`",    "inline": True},
-                {"name": "📦 Cantidad",      "value": f"`{qty}`",          "inline": True},
-                {"name": "💸 Comisión",      "value": f"`{fee} USDT`",     "inline": True},
+                {"name": "📊 Par",            "value": f"`{pair_display}`",  "inline": True},
+                {"name": f"{emoji} Dirección", "value": f"`{direction}`",    "inline": True},
+                {"name": "📐 Apalancamiento", "value": f"`x{leverage}`",    "inline": True},
+                {"name": "💰 Precio medio",   "value": f"`{avg_price}`",    "inline": True},
+                {"name": "📦 Cantidad",       "value": f"`{qty}`",          "inline": True},
+                {"name": "💸 Comisión",       "value": f"`{fee} USDT`",     "inline": True},
+                {"name": "🏦 Margen",         "value": f"`{margin_str}`",   "inline": True},
+                {"name": "📊 % de cuenta",    "value": f"`{pct_cuenta}`",   "inline": True},
             ],
             "footer": {"text": f"{YOUTUBER_NAME} • Ejecutada"},
             "timestamp": datetime.now(timezone.utc).isoformat(),
