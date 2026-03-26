@@ -83,16 +83,25 @@ class DiscordSender:
 
         pair_display = _format_pair(symbol)
 
+        # Calcular % de la cuenta utilizado
+        try:
+            margin_f  = float(margin)
+            pct_cuenta = (margin_f / balance * 100) if balance > 0 else 0
+            pct_str    = f"{pct_cuenta:.1f}%"
+        except (ValueError, ZeroDivisionError):
+            pct_str = "N/A"
+
         embed = {
             "title": f"{emoji} {label}  —  {pair_display}",
             "color": color,
             "fields": [
-                {"name": "📊 Par",          "value": f"`{pair_display}`",        "inline": True},
-                {"name": "📐 Apalancamiento","value": f"`x{leverage}`",          "inline": True},
-                {"name": "💰 Precio entrada","value": f"`{entry_price}`",        "inline": True},
-                {"name": "📦 Cantidad",      "value": f"`{qty}`",               "inline": True},
-                {"name": "🏦 Margen",        "value": f"`{margin} USDT`",       "inline": True},
-                {"name": "💵 Balance",        "value": f"`{balance:.2f} USDT`",  "inline": True},
+                {"name": "📊 Par",            "value": f"`{pair_display}`",        "inline": True},
+                {"name": "📐 Apalancamiento", "value": f"`x{leverage}`",           "inline": True},
+                {"name": "💰 Precio entrada", "value": f"`{entry_price}`",         "inline": True},
+                {"name": "📦 Cantidad",       "value": f"`{qty}`",                "inline": True},
+                {"name": "🏦 Margen",         "value": f"`{margin} USDT`",        "inline": True},
+                {"name": "💵 Balance",         "value": f"`{balance:.2f} USDT`",   "inline": True},
+                {"name": "📊 % de cuenta",    "value": f"`{pct_str}`",            "inline": True},
             ],
             "footer": {"text": f"{YOUTUBER_NAME} • Señal automática"},
             "timestamp": datetime.now(timezone.utc).isoformat(),
